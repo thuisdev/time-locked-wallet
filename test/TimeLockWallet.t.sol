@@ -100,7 +100,7 @@ contract ReentrantAttacker {
 
 /// @title TimeLockWallet tests
 /// @notice Proves that all value-moving paths (single claim, batch claim, reclaim, fee withdrawal) are not reentrant,
-///         covers the key spec rules (pause, batch cap, duplicate IDs, direct ETH) and fuzzes the fee accounting.
+///         covers pause, the batch cap, duplicate IDs and direct ETH, and fuzzes the fee accounting.
 contract TimeLockWalletTest is Test {
     uint256 private constant LOCK_AMOUNT = 1 ether;
 
@@ -119,7 +119,7 @@ contract TimeLockWalletTest is Test {
     }
 
     // -------------------------------------------------------------------------
-    // Reentrancy (TLW-12)
+    // Reentrancy
     // -------------------------------------------------------------------------
 
     /// @dev The re-entry reverts with ReentrancyGuardReentrantCall inside the attacker's receive(). The low-level call
@@ -177,10 +177,10 @@ contract TimeLockWalletTest is Test {
     }
 
     // -------------------------------------------------------------------------
-    // Spec rules
+    // Guards
     // -------------------------------------------------------------------------
 
-    /// @dev TLW-11: one paused state blocks all five state-changing user/admin paths.
+    /// @dev One paused state blocks all five state-changing user and admin paths.
     function test_pause_blocksAllValuePaths() public {
         uint256 lockId = _createMaturedLock(beneficiary);
         uint256[] memory lockIds = new uint256[](1);
@@ -211,7 +211,7 @@ contract TimeLockWalletTest is Test {
         timeLock.withdrawFees(owner, 1);
     }
 
-    /// @dev TLW-8: more than MAX_BATCH IDs is rejected before any lock is touched.
+    /// @dev More than MAX_BATCH IDs is rejected before any lock is touched.
     function test_claimBatch_overCap_reverts() public {
         uint256 count = timeLock.MAX_BATCH() + 1;
         uint256[] memory lockIds = new uint256[](count);
@@ -221,7 +221,7 @@ contract TimeLockWalletTest is Test {
         timeLock.claimBatch(lockIds);
     }
 
-    /// @dev TLW-8: the same ID twice cannot be paid twice, because the first iteration marks it Claimed.
+    /// @dev The same ID twice cannot be paid twice, because the first iteration marks it Claimed.
     function test_claimBatch_duplicateIds_reverts() public {
         uint256 lockId = _createMaturedLock(beneficiary);
         uint256[] memory lockIds = new uint256[](2);
@@ -235,7 +235,7 @@ contract TimeLockWalletTest is Test {
         timeLock.claimBatch(lockIds);
     }
 
-    /// @dev TLW-2: plain ETH must go through createLock.
+    /// @dev Plain ETH must go through createLock.
     function test_receive_plainEth_reverts() public {
         vm.prank(depositor);
         (bool success, bytes memory data) = address(timeLock).call{value: LOCK_AMOUNT}("");
@@ -248,7 +248,7 @@ contract TimeLockWalletTest is Test {
     // Fuzz
     // -------------------------------------------------------------------------
 
-    /// @dev TLW-5 + TLW-9: for any amount, payout + fee == amount, fee follows FEE_BPS, and the contract balance
+    /// @dev For any amount, payout + fee == amount, fee follows FEE_BPS, and the contract balance
     ///      afterwards equals exactly the accrued fees (no ETH lost or created).
     function testFuzz_claimLock_anyAmount_accountingHolds(uint256 amount) public {
         amount = bound(amount, 1, 1_000_000 ether);
@@ -268,7 +268,7 @@ contract TimeLockWalletTest is Test {
         assertEq(address(timeLock).balance, timeLock.accruedFees());
     }
 
-    /// @dev TLW-8: for any batch size up to MAX_BATCH, one transfer pays the sum and fees are accrued once.
+    /// @dev For any batch size up to MAX_BATCH, one transfer pays the sum and fees are accrued once.
     function testFuzz_claimBatch_anyCount_accountingHolds(uint256 count) public {
         count = bound(count, 1, timeLock.MAX_BATCH());
 
@@ -287,7 +287,7 @@ contract TimeLockWalletTest is Test {
         assertEq(address(timeLock).balance, timeLock.accruedFees());
     }
 
-    /// @dev TLW-5: nobody except the beneficiary can claim, for any caller address.
+    /// @dev Nobody except the beneficiary can claim, for any caller address.
     function testFuzz_claimLock_anyNonBeneficiary_reverts(address caller) public {
         vm.assume(caller != beneficiary);
         uint256 lockId = _createMaturedLock(beneficiary);
@@ -297,7 +297,7 @@ contract TimeLockWalletTest is Test {
         timeLock.claimLock(lockId);
     }
 
-    /// @dev TLW-1: any unlock time earlier than now + MIN_DELAY is rejected.
+    /// @dev Any unlock time earlier than now + MIN_DELAY is rejected.
     function testFuzz_createLock_tooEarly_reverts(uint256 delay) public {
         delay = bound(delay, 0, timeLock.MIN_DELAY() - 1);
         uint64 unlockTime = uint64(block.timestamp + delay);

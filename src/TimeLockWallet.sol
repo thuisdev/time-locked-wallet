@@ -12,7 +12,7 @@ import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 /// @notice Anyone can lock ETH for a beneficiary until a future unlock time. The beneficiary claims after unlock, either
 ///         to themselves or to a chosen recipient. If a lock stays unclaimed past a grace period, the depositor can
 ///         reclaim it. A small protocol fee is taken on claims and withdrawn separately by the owner.
-/// @dev All ETH-moving functions follow checks-effects-interactions and use nonReentrant (TLW-12). Internal accounting
+/// @dev All ETH-moving functions follow checks-effects-interactions and use nonReentrant. Internal accounting
 ///      (lock amounts + accruedFees) is the source of truth, never address(this).balance, because ETH can be
 ///      force-sent to the contract (e.g. via selfdestruct) without ever hitting receive().
 contract TimeLockWallet is Ownable2Step, Pausable, ReentrancyGuard {
@@ -196,13 +196,11 @@ contract TimeLockWallet is Ownable2Step, Pausable, ReentrancyGuard {
     // Receive / fallback
     // -------------------------------------------------------------------------
 
-    // TLW-2: reject plain ETH that bypasses lock creation
     /// @notice Rejects plain ETH transfers. Use createLock to deposit.
     receive() external payable {
         revert DirectEthNotAccepted();
     }
 
-    // TLW-2: reject calls with unknown calldata
     /// @notice Rejects calls that do not match any function.
     fallback() external {
         revert FallbackNotSupported();
@@ -212,7 +210,6 @@ contract TimeLockWallet is Ownable2Step, Pausable, ReentrancyGuard {
     // External: payable
     // -------------------------------------------------------------------------
 
-    // TLW-1: create a lock for a non-zero beneficiary with amount > 0 and unlock time >= now + MIN_DELAY
     /// @notice Locks the sent ETH for `beneficiary` until `unlockTime`.
     /// @dev Emits LockCreated. Reverts if paused, beneficiary is zero, unlock time is too early, no ETH is sent, or
     ///      msg.value exceeds uint128 (SafeCast). No external calls, so nonReentrant is not required.
@@ -251,7 +248,7 @@ contract TimeLockWallet is Ownable2Step, Pausable, ReentrancyGuard {
             status: LockStatus.Open
         });
 
-        // TLW-4: index by beneficiary so lookups never scan storage
+        // Index by beneficiary so lookups never scan storage
         _beneficiaryLockIds[beneficiary].push(lockId);
 
         emit LockCreated(lockId, beneficiary, msg.sender, msg.value, unlockTime);
@@ -263,8 +260,6 @@ contract TimeLockWallet is Ownable2Step, Pausable, ReentrancyGuard {
     // External: state-changing
     // -------------------------------------------------------------------------
 
-    // TLW-5: beneficiary claims a matured lock to themselves
-    // TLW-12: nonReentrant on every ETH-moving function
     /// @notice Claims a matured lock and sends the payout (minus protocol fee) to the caller.
     /// @dev Emits FundsClaimed. Reverts if paused, lock does not exist or is not open, caller is not the beneficiary,
     ///      or the lock has not matured yet.
@@ -273,8 +268,6 @@ contract TimeLockWallet is Ownable2Step, Pausable, ReentrancyGuard {
         _claim(lockId, msg.sender);
     }
 
-    // TLW-6: same as TLW-5, but the payout goes to a chosen non-zero recipient
-    // TLW-12: nonReentrant on every ETH-moving function
     /// @notice Claims a matured lock and sends the payout (minus protocol fee) to `recipient`.
     /// @dev Emits FundsClaimed. Same reverts as claimLock, plus ZeroAddress if recipient is the zero address.
     /// @param lockId    ID of the lock to claim.
@@ -286,8 +279,6 @@ contract TimeLockWallet is Ownable2Step, Pausable, ReentrancyGuard {
         _claim(lockId, recipient);
     }
 
-    // TLW-7: depositor reclaims an unclaimed lock after unlock time + GRACE_PERIOD
-    // TLW-12: nonReentrant on every ETH-moving function
     /// @notice Returns the full amount of an unclaimed lock to its depositor once the grace period has passed.
     /// @dev Emits FundsReclaimed. No protocol fee on reclaims. Reverts if paused, lock does not exist or is not open,
     ///      caller is not the depositor, or unlock time + GRACE_PERIOD has not been reached. After the grace period
@@ -320,8 +311,6 @@ contract TimeLockWallet is Ownable2Step, Pausable, ReentrancyGuard {
         }
     }
 
-    // TLW-8: claim several matured locks in one transaction with a single transfer
-    // TLW-12: state for all IDs is updated before the one external call
     /// @notice Claims up to MAX_BATCH matured locks at once and sends the combined payout to the caller.
     /// @dev Emits FundsClaimed per lock. Constant work per ID, no storage scans. Reverts if paused, the list is empty
     ///      or longer than MAX_BATCH, or any ID is invalid or ineligible. Duplicate IDs revert with LockNotOpen because
@@ -366,7 +355,7 @@ contract TimeLockWallet is Ownable2Step, Pausable, ReentrancyGuard {
         }
 
         // Effects
-        // TLW-9: accrue fees internally, never forwarded inline
+        // Accrue fees internally, never forwarded inline
         accruedFees += totalFees;
 
         // Interactions
@@ -376,8 +365,6 @@ contract TimeLockWallet is Ownable2Step, Pausable, ReentrancyGuard {
         }
     }
 
-    // TLW-10: owner withdraws accrued protocol fees through a separate path
-    // TLW-12: nonReentrant on every ETH-moving function
     /// @notice Withdraws `amount` of accrued protocol fees to `to`.
     /// @dev Emits FeesWithdrawn. Reverts if caller is not the owner, contract is paused, `to` is zero, amount is
     ///      zero, or amount exceeds accruedFees.
@@ -409,14 +396,12 @@ contract TimeLockWallet is Ownable2Step, Pausable, ReentrancyGuard {
         }
     }
 
-    // TLW-11: owner can pause create, claim, reclaim, batch claim and fee withdrawal
     /// @notice Pauses all lock creation, claims, reclaims, batch claims and fee withdrawals.
     /// @dev Emits Paused (from OZ Pausable). OZ's _pause already reverts if the contract is already paused.
     function pause() external onlyOwner {
         _pause();
     }
 
-    // TLW-11: owner can unpause
     /// @notice Unpauses the contract.
     /// @dev Emits Unpaused (from OZ Pausable). OZ's _unpause already reverts if the contract is not paused.
     function unpause() external onlyOwner {
@@ -427,7 +412,6 @@ contract TimeLockWallet is Ownable2Step, Pausable, ReentrancyGuard {
     // External: view
     // -------------------------------------------------------------------------
 
-    // TLW-3: return stored lock data for an existing ID
     /// @notice Returns the full data of a lock.
     /// @dev Reverts with LockNotFound if the ID was never created.
     /// @param lockId ID of the lock.
@@ -440,7 +424,6 @@ contract TimeLockWallet is Ownable2Step, Pausable, ReentrancyGuard {
         }
     }
 
-    // TLW-4: return lock IDs of a beneficiary without scanning storage
     /// @notice Returns all lock IDs ever created for `beneficiary`, including already claimed or reclaimed ones.
     /// @dev Returns an empty array for addresses without locks. That is a valid answer, not an error.
     /// @param beneficiary Address to look up.
@@ -469,7 +452,7 @@ contract TimeLockWallet is Ownable2Step, Pausable, ReentrancyGuard {
         // Effects
         lock.status = LockStatus.Claimed;
 
-        // TLW-9: accrue fee internally, never forwarded inline
+        // Accrue the fee internally, never forwarded inline
         accruedFees += fee;
 
         emit FundsClaimed(lockId, recipient, msg.sender, lock.depositor, payout, fee);
